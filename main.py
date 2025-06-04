@@ -1,18 +1,20 @@
-from flask import Flask, request, abort
+import os
+import requests
 import yfinance as yf
+import mplfinance as mpf
+import matplotlib.pyplot as plt
+from flask import Flask, request, abort, send_file
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
-app = Flask(__name__)
-
-# 環境變數請於 Render 設定
-import os
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+app = Flask(__name__)
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -26,28 +28,83 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    text = event.message.text.strip().upper()
-    stock_code = None
+    msg = event.message.text.strip().upper()
 
-    if text.isdigit():
-        stock_code = f"{text}.TW"
-    elif text.isalpha():
-        stock_code = text
+    if msg.startswith('P') and msg[1:].isalnum():
+        stock_id = msg[1:]
+        suffix = "" if stock_id.isalpha() else ".TW"
+        stock = yf.Ticker(f"{stock_id}{suffix}")
+        data = stock.history(period="2d")
+        if not data.empty:
+            price = data['Close'].iloc[-1]
+            prev_close = data['Close'].iloc[-2] if len(data) > 1 else price
+            change = price - prev_close
+            pct_change = (change / prev_close) * 100 if prev_close != 0 else 0
+            volume = data['Volume'].iloc[-1]
+            name = stock.info.get('shortName', stock_id)
+            reply = f"{name} ({stock_id})\n價格: {price:.2f}\n漲跌: {change:+.2f} ({pct_change:+.2f}%)\n成交量: {int(volume):,}"
+        else:
+            reply = f"查無 {stock_id} 的即時資料"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-    if stock_code:
+    elif msg.startswith('K') and msg[1:].isalnum():
+        stock_id = msg[1:]
+        suffix = "" if stock_id.isalpha() else ".TW"
+        stock = yf.Ticker(f"{stock_id}{suffix}")
+        data = stock.history(period="1mo")
+        if not data.empty:
+            mpf.plot(data, type='candle', style='charles', volume=True, savefig='static/kchart.png')
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"{stock_id} K線圖如下:\nhttps://YOUR_RENDER_URL/static/kchart.png")
+            )
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"查無 {stock_id} 的K線資料"))
+
+    elif msg.startswith('T') and msg[1:].isdigit():
+        stock_id = msg[1:]
+        url = f"https://www.twse.com.tw/fund/TWT38U?response=json&selectType=ALL&stockNo={stock_id}"
+        res = requests.get(url)
         try:
-            stock = yf.Ticker(stock_code)
-            info = stock.info
-            price = info['regularMarketPrice']
-            change = info['regularMarketChangePercent']
-            reply = f"{stock_code} 價格: {price} 元\n漲跌: {round(change*100, 2)}%"
-        except:
-            reply = "找不到該股票資訊，請確認代碼是否正確"
-    else:
-        reply = "請輸入正確的股票代碼，例如：2330 或 AAPL"
+            data = res.json()['data'][0]
+            reply = f"三大法人買賣資訊（{stock_id}）\n日期: {data[0]}\n外資: {data[1]}\n投信: {data[4]}\n自營商: {data[7]}"
+        except Exception:
+            reply = f"查無 {stock_id} 的三大法人資料"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+    elif msg.startswith("IND") and msg[3:].isalnum():
+        stock_id = msg[3:]
+        suffix = "" if stock_id.isalpha() else ".TW"
+        stock = yf.Ticker(f"{stock_id}{suffix}")
+        data = stock.history(period="3mo")
+        if not data.empty:
+            try:
+                data['MA5'] = data['Close'].rolling(window=5).mean()
+                data['MA20'] = data['Close'].rolling(window=20).mean()
+                mpf.plot(data, type='candle', style='charles', mav=(5, 20), volume=True, savefig='static/indicator.png')
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text=f"{stock_id} 技術指標圖如下:\nhttps://YOUR_RENDER_URL/static/indicator.png")
+                )
+            except Exception:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{stock_id} 無法產製技術指標圖"))
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"查無 {stock_id} 的資料"))
+
+    elif msg == "HELP":
+        instructions = (
+            "\n指令教學：\n"
+            "P2330 → 即時股價\n"
+            "K2330 → 日K線圖\n"
+            "T2330 → 三大法人資料\n"
+            "PTSLA → 美股即時股價\n"
+            "KTSLA → 美股K線圖\n"
+            "IND2330 或 INDTSLA → 技術指標圖(MA5/20)"
+        )
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=instructions))
+
+    else:
+        return
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host='0.0.0.0', port=10000)
