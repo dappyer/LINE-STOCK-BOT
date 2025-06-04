@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from flask import Flask, request, abort, send_file
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSendMessage
 
 # 確保 static 資料夾存在
 if not os.path.exists('static'):
@@ -60,7 +60,10 @@ def handle_message(event):
             mpf.plot(data, type='candle', style='charles', volume=True, savefig='static/kchart.png')
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text=f"{stock_id} K線圖如下:\nhttps://line-stock-bot-0966.onrender.com/static/kchart.png")
+                ImageSendMessage(
+                    original_content_url="https://line-stock-bot-0966.onrender.com/static/kchart.png",
+                    preview_image_url="https://line-stock-bot-0966.onrender.com/static/kchart.png"
+                )
             )
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"查無 {stock_id} 的K線資料"))
@@ -88,7 +91,10 @@ def handle_message(event):
                 mpf.plot(data, type='candle', style='charles', mav=(5, 20), volume=True, savefig='static/indicator.png')
                 line_bot_api.reply_message(
                     event.reply_token,
-                    TextSendMessage(text=f"{stock_id} 技術指標圖如下:\nhttps://line-stock-bot-0966.onrender.com/static/indicator.png")
+                    ImageSendMessage(
+                        original_content_url="https://line-stock-bot-0966.onrender.com/static/indicator.png",
+                        preview_image_url="https://line-stock-bot-0966.onrender.com/static/indicator.png"
+                    )
                 )
             except Exception:
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{stock_id} 無法產製技術指標圖"))
