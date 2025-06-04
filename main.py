@@ -8,6 +8,10 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
+# 確保 static 資料夾存在
+if not os.path.exists('static'):
+    os.makedirs('static')
+
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 
@@ -56,7 +60,7 @@ def handle_message(event):
             mpf.plot(data, type='candle', style='charles', volume=True, savefig='static/kchart.png')
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text=f"{stock_id} K線圖如下:\nhttps://line-stock-bot-0966.onrender.com/static/kchart.png")
+                TextSendMessage(text=f"{stock_id} K線圖如下:\nhttps://YOUR_RENDER_URL/static/kchart.png")
             )
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"查無 {stock_id} 的K線資料"))
@@ -84,7 +88,7 @@ def handle_message(event):
                 mpf.plot(data, type='candle', style='charles', mav=(5, 20), volume=True, savefig='static/indicator.png')
                 line_bot_api.reply_message(
                     event.reply_token,
-                    TextSendMessage(text=f"{stock_id} 技術指標圖如下:\nhttps://line-stock-bot-0966.onrender.com/static/indicator.png")
+                    TextSendMessage(text=f"{stock_id} 技術指標圖如下:\nhttps://YOUR_RENDER_URL/static/indicator.png")
                 )
             except Exception:
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{stock_id} 無法產製技術指標圖"))
