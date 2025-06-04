@@ -1,3 +1,7 @@
 Flask
+line-bot-sdk==3.17.1
 yfinance
-line-bot-sdk
+requests
+matplotlib
+pandas
+mplfinance
