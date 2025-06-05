@@ -95,6 +95,25 @@ def handle_message(event):
             reply = f"查無 {stock_id} 的三大法人資料"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
+    elif msg.startswith("H") and msg[1:].isdigit():
+        stock_id = msg[1:]
+        try:
+            url = f"https://www.cnyes.com/twstock/{stock_id}/institutional-investors"
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                chart = soup.select_one('img[src*="InstitutionalInvestors"]')
+                if chart:
+                    img_url = chart['src']
+                    reply = f"{stock_id} 法人持股趨勢圖：\n{img_url}"
+                else:
+                    reply = f"查無 {stock_id} 的法人持股趨勢圖"
+            else:
+                reply = f"無法取得 {stock_id} 的資料"
+        except Exception:
+            reply = f"取得法人持股趨勢失敗"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+
     elif msg.startswith("IND") and msg[3:].isalnum():
         stock_id = msg[3:]
         suffix = "" if stock_id.isalpha() else ".TW"
@@ -117,32 +136,36 @@ def handle_message(event):
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"查無 {stock_id} 的資料"))
 
-    elif msg.startswith("B") and msg[1:].isdigit():
-        stock_id = msg[1:]
-        url = f"https://www.wantgoo.com/stock/{stock_id}/talk"
+    elif msg == "TOP法人買超":
         try:
+            url = "https://www.cnyes.com/twstock/agent-trading"
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
             soup = BeautifulSoup(res.text, 'html.parser')
-            top_comment = soup.select_one('.talk-list .item .content').text.strip()
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"玩股網熱門留言：\n{top_comment}"))
+            top_items = soup.select('table tr')[1:6]
+            results = []
+            for item in top_items:
+                tds = item.select('td')
+                if len(tds) >= 4:
+                    results.append(f"{tds[1].text.strip()} ({tds[0].text.strip()}): {tds[3].text.strip()} 張")
+            reply = "法人買超排行前五名：\n" + '\n'.join(results)
         except Exception:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="無法擷取玩股網留言"))
+            reply = "法人買超排行擷取失敗"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-    elif msg.startswith("N") and msg[1:].isdigit():
-        stock_id = msg[1:]
+    elif msg == "TOP殖利率":
         try:
-            url = f"https://news.cnyes.com/news/cat/tw_stock?exp=a&search={stock_id}"
+            url = "https://histock.tw/stock/yield.aspx"
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
             soup = BeautifulSoup(res.text, 'html.parser')
-            items = soup.select('._1Zdp')
-            if items:
-                title1 = items[0].text.strip()
-                link1 = 'https://news.cnyes.com' + items[0].get('href')
-                reply = f"最新新聞：\n{title1}\n{link1}"
-            else:
-                reply = "查無相關新聞"
+            rows = soup.select("#CPHB1_gv tbody tr")[:5]
+            results = []
+            for row in rows:
+                cols = row.find_all("td")
+                if len(cols) >= 6:
+                    results.append(f"{cols[1].text.strip()} ({cols[0].text.strip()}): 殖利率 {cols[5].text.strip()}")
+            reply = "高殖利率排行前五名：\n" + '\n'.join(results)
         except Exception:
-            reply = "新聞擷取失敗"
+            reply = "殖利率排行擷取失敗"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
     elif msg == "HELP":
@@ -151,11 +174,14 @@ def handle_message(event):
             "P2330 → 即時股價 (台股 twstock)\n"
             "K2330 → 日K線圖\n"
             "T2330 → 三大法人資料\n"
+            "H2330 → 法人持股趨勢圖\n"
             "PTSLA → 美股即時股價\n"
             "KTSLA → 美股K線圖\n"
             "IND2330 或 INDTSLA → 技術指標圖(MA5/20)\n"
             "B2330 → 玩股網熱門留言\n"
-            "N2330 → 鉅亨網最新新聞"
+            "N2330 → 鉅亨網最新新聞\n"
+            "TOP法人買超 → 法人買超排行\n"
+            "TOP殖利率 → 殖利率排行"
         )
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=instructions))
     else:
@@ -171,7 +197,7 @@ def push_ai_news():
             title = news.text.strip()
             link = 'https://news.cnyes.com' + news.get('href')
             msg = f"每日AI新聞：\n{title}\n{link}"
-            line_bot_api.push_message('lagunapaul', TextSendMessage(text=msg))
+            line_bot_api.push_message('YOUR_USER_ID', TextSendMessage(text=msg))
     except Exception as e:
         print(f"推播失敗: {e}")
 
