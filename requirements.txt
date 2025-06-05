@@ -1,9 +1,11 @@
 Flask
 line-bot-sdk==3.17.1
 yfinance
-requests
-matplotlib
-pandas
 mplfinance
+matplotlib
 twstock
+beautifulsoup4
+apscheduler
+requests
+pandas
 lxml
