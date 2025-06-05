@@ -57,11 +57,14 @@ def handle_message(event):
         stock_id = msg[1:]
         realtime = twstock.realtime.get(stock_id)
         if realtime['success']:
-            name = realtime['info']['name']
-            price = realtime['realtime']['latest_trade_price']
-            change = float(realtime['realtime']['change'])
-            percent = float(realtime['realtime']['change_percent'])
-            volume = int(realtime['realtime']['accumulate_trade_volume'])
+            name = realtime['info'].get('name', '未知名稱')
+            price = realtime['realtime'].get('latest_trade_price', 'N/A')
+            try:
+                change = float(realtime['realtime'].get('change', 0))
+                percent = float(realtime['realtime'].get('change_percent', 0))
+            except (ValueError, TypeError):
+                change = percent = 0
+            volume = int(realtime['realtime'].get('accumulate_trade_volume', 0))
             reply = f"{name} ({stock_id})\n價格: {price}\n漲跌: {change:+.2f} ({percent:+.2f}%)\n成交量: {volume:,}"
         else:
             reply = f"查無 {stock_id} 的即時資料"
@@ -114,27 +117,37 @@ def handle_message(event):
             reply = f"取得法人持股趨勢失敗"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-    elif msg.startswith("IND") and msg[3:].isalnum():
-        stock_id = msg[3:]
-        suffix = "" if stock_id.isalpha() else ".TW"
-        stock = yf.Ticker(f"{stock_id}{suffix}")
-        data = stock.history(period="3mo")
-        if not data.empty:
-            try:
-                data['MA5'] = data['Close'].rolling(window=5).mean()
-                data['MA20'] = data['Close'].rolling(window=20).mean()
-                mpf.plot(data, type='candle', style='charles', mav=(5, 20), volume=True, savefig='static/indicator.png')
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    ImageSendMessage(
-                        original_content_url="https://line-stock-bot-0966.onrender.com/static/indicator.png",
-                        preview_image_url="https://line-stock-bot-0966.onrender.com/static/indicator.png"
-                    )
-                )
-            except Exception:
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{stock_id} 無法產製技術指標圖"))
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"查無 {stock_id} 的資料"))
+    elif msg.startswith("N") and msg[1:].isdigit():
+        stock_id = msg[1:]
+        try:
+            news_url = f"https://www.cnyes.com/twstock/{stock_id}/news"
+            res = requests.get(news_url, headers={'User-Agent': 'Mozilla/5.0'})
+            soup = BeautifulSoup(res.text, 'html.parser')
+            articles = soup.select("a._1Zdp")
+            if articles:
+                latest = articles[0]
+                reply = f"{stock_id} 最新新聞：\n{latest.text.strip()}\nhttps://www.cnyes.com{latest['href']}"
+            else:
+                reply = f"查無 {stock_id} 的最新新聞"
+        except Exception:
+            reply = f"新聞擷取失敗"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+
+    elif msg.startswith("B") and msg[1:].isdigit():
+        stock_id = msg[1:]
+        try:
+            url = f"https://www.wantgoo.com/stock/{stock_id}/talk"
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+            soup = BeautifulSoup(res.text, 'html.parser')
+            top_msg = soup.select_one(".msg-list .msg")
+            if top_msg:
+                content = top_msg.select_one(".summary")
+                reply = f"{stock_id} 熱門留言：\n{content.text.strip()}"
+            else:
+                reply = f"查無 {stock_id} 的熱門留言"
+        except Exception:
+            reply = f"留言擷取失敗"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
     elif msg == "TOP法人買超":
         try:
