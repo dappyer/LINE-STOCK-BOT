@@ -123,10 +123,12 @@ def handle_message(event):
             news_url = f"https://www.cnyes.com/twstock/{stock_id}/news"
             res = requests.get(news_url, headers={'User-Agent': 'Mozilla/5.0'})
             soup = BeautifulSoup(res.text, 'html.parser')
-            articles = soup.select("a._1Zdp")
+            articles = soup.select("section a[href^='/news/story/']")
             if articles:
                 latest = articles[0]
-                reply = f"{stock_id} 最新新聞：\n{latest.text.strip()}\nhttps://www.cnyes.com{latest['href']}"
+                title = latest.text.strip()
+                href = latest['href']
+                reply = f"{stock_id} 最新新聞：\n{title}\nhttps://www.cnyes.com{href}"
             else:
                 reply = f"查無 {stock_id} 的最新新聞"
         except Exception:
@@ -136,13 +138,13 @@ def handle_message(event):
     elif msg.startswith("B") and msg[1:].isdigit():
         stock_id = msg[1:]
         try:
-            url = f"https://www.wantgoo.com/stock/{stock_id}/talk"
+            url = f"https://www.cmoney.tw/forum/stock/{stock_id}"
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
             soup = BeautifulSoup(res.text, 'html.parser')
-            top_msg = soup.select_one(".msg-list .msg")
-            if top_msg:
-                content = top_msg.select_one(".summary")
-                reply = f"{stock_id} 熱門留言：\n{content.text.strip()}"
+            comment = soup.select_one("div.comment-item")
+            if comment:
+                text = comment.text.strip().replace('\n', '')
+                reply = f"{stock_id} 熱門留言（CMoney）：\n{text[:150]}..."
             else:
                 reply = f"查無 {stock_id} 的熱門留言"
         except Exception:
@@ -191,7 +193,7 @@ def handle_message(event):
             "PTSLA → 美股即時股價\n"
             "KTSLA → 美股K線圖\n"
             "IND2330 或 INDTSLA → 技術指標圖(MA5/20)\n"
-            "B2330 → 玩股網熱門留言\n"
+            "B2330 → CMoney熱門留言\n"
             "N2330 → 鉅亨網最新新聞\n"
             "TOP法人買超 → 法人買超排行\n"
             "TOP殖利率 → 殖利率排行"
