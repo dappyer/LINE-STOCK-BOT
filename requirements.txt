@@ -3,7 +3,7 @@ requests==2.31.0
 yfinance==0.2.38
 mplfinance==0.12.10b0
 matplotlib==3.8.4
-twstock==1.1.8
+twstock==1.4.0
 beautifulsoup4==4.12.3
 lxml==5.2.1
 line-bot-sdk==2.4.2
