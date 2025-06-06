@@ -52,6 +52,21 @@ def get_comments(stock_id):
     except:
         return "留言讀取失敗"
 
+def get_tw_price(stock_id):
+    try:
+        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{stock_id}.tw"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        data = res.json()['msgArray'][0]
+        name = data['n']
+        price = data['z']
+        y_price = data['y']
+        vol = data['v']
+        change = float(price) - float(y_price)
+        percent = (change / float(y_price)) * 100
+        return f"{name} ({stock_id})\n現價: {price}\n漲跌: {change:+.2f} ({percent:+.2f}%)\n成交量: {vol}"
+    except:
+        return "台股即時報價擷取失敗"
+
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -82,22 +97,16 @@ def handle_message(event):
 
     if msg.startswith("P"):
         stock_id = msg[1:]
-        try:
-            if stock_id.isdigit():
-                stock = twstock.realtime.get(stock_id)
-                name = stock['info']['name']
-                price = stock['realtime']['latest_trade_price']
-                change = stock['realtime']['change']
-                percent = stock['realtime']['change_percent']
-                vol = stock['realtime']['accumulate_trade_volume']
-                reply = f"{name} ({stock_id})\n現價: {price}\n漲跌: {change} ({percent})\n成交量: {vol}"
-            else:
+        if stock_id.isdigit():
+            reply = get_tw_price(stock_id)
+        else:
+            try:
                 stock = yf.Ticker(stock_id)
                 price = stock.info['regularMarketPrice']
                 name = stock.info['shortName']
                 reply = f"{name} ({stock_id})\n現價: {price}"
-        except:
-            reply = "股價查詢失敗"
+            except:
+                reply = "股價查詢失敗"
 
     elif msg.startswith("K"):
         stock_id = msg[1:]
@@ -224,4 +233,3 @@ scheduler.start()
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=10000)
-
