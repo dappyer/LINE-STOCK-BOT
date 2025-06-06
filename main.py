@@ -54,16 +54,25 @@ def get_comments(stock_id):
 
 def get_tw_price(stock_id):
     try:
-        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{stock_id}.tw|otc_{stock_id}.tw"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-        json_data = res.json()
-        if not json_data['msgArray']:
-            return f"查無 {stock_id} 的報價（可能非上市上櫃）"
-        data = json_data['msgArray'][0]
-        name = data['n']
-        price = data['z']
-        y_price = data['y']
-        vol = data['v']
+        tse_url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{stock_id}.tw"
+        otc_url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=otc_{stock_id}.tw"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+
+        res = requests.get(tse_url, headers=headers, timeout=5)
+        data = res.json()
+        if data['msgArray']:
+            stock = data['msgArray'][0]
+        else:
+            res = requests.get(otc_url, headers=headers, timeout=5)
+            data = res.json()
+            if not data['msgArray']:
+                return f"查無 {stock_id} 的報價（可能非上市上櫃）"
+            stock = data['msgArray'][0]
+
+        name = stock['n']
+        price = stock['z']
+        y_price = stock['y']
+        vol = stock['v']
         change = float(price) - float(y_price)
         percent = (change / float(y_price)) * 100
         return f"{name} ({stock_id})\n現價: {price}\n漲跌: {change:+.2f} ({percent:+.2f}%)\n成交量: {vol}"
