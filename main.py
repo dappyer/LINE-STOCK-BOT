@@ -54,18 +54,23 @@ def get_comments(stock_id):
 
 def get_tw_price(stock_id):
     try:
-        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{stock_id}.tw"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-        data = res.json()['msgArray'][0]
-        name = data['n']
-        price = data['z']
-        y_price = data['y']
-        vol = data['v']
-        change = float(price) - float(y_price)
-        percent = (change / float(y_price)) * 100
-        return f"{name} ({stock_id})\n現價: {price}\n漲跌: {change:+.2f} ({percent:+.2f}%)\n成交量: {vol}"
-    except:
-        return "台股即時報價擷取失敗"
+        for exchange in ['tse', 'otc']:
+            url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={exchange}_{stock_id}.tw"
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            json_data = res.json()
+            if not json_data['msgArray']:
+                continue
+            data = json_data['msgArray'][0]
+            name = data['n']
+            price = data['z']
+            y_price = data['y']
+            vol = data['v']
+            change = float(price) - float(y_price)
+            percent = (change / float(y_price)) * 100
+            return f"{name} ({stock_id})\n現價: {price}\n漲跌: {change:+.2f} ({percent:+.2f}%)\n成交量: {vol}"
+        return f"查無 {stock_id} 的報價（可能非上市上櫃）"
+    except Exception as e:
+        return f"台股即時報價擷取失敗：{e}"
 
 @app.route("/callback", methods=['POST'])
 def callback():
