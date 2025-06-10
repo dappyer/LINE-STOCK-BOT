@@ -11,73 +11,19 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSendMessage
 from apscheduler.schedulers.background import BackgroundScheduler
 import datetime
-import threading
 
+# 確保 static 資料夾存在
 if not os.path.exists('static'):
     os.makedirs('static')
 
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
-USER_ID = os.getenv('LINE_USER_ID', 'YOUR_USER_ID')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 app = Flask(__name__)
 scheduler = BackgroundScheduler()
-
-def get_news(stock_id):
-    try:
-        url = f"https://www.cnyes.com/twstock/{stock_id}/news"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-        soup = BeautifulSoup(res.text, "html.parser")
-        articles = soup.select("a[href^='/news/id/']")
-        if not articles:
-            return "無最新新聞"
-        latest = articles[0].text.strip()
-        href = "https://www.cnyes.com" + articles[0]['href']
-        return f"{stock_id} 最新新聞：\n{latest}\n{href}"
-    except:
-        return "新聞讀取失敗"
-
-def get_comments(stock_id):
-    try:
-        url = f"https://www.cmoney.tw/forum/stock/{stock_id}"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-        soup = BeautifulSoup(res.text, "html.parser")
-        comment = soup.select_one(".forum-card__content")
-        if comment:
-            return f"{stock_id} 熱門留言：\n{comment.text.strip()}"
-        return "無熱門留言"
-    except:
-        return "留言讀取失敗"
-
-def get_tw_price(stock_id):
-    try:
-        tse_url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{stock_id}.tw"
-        otc_url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=otc_{stock_id}.tw"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-
-        res = requests.get(tse_url, headers=headers, timeout=5)
-        data = res.json()
-        if data['msgArray']:
-            stock = data['msgArray'][0]
-        else:
-            res = requests.get(otc_url, headers=headers, timeout=5)
-            data = res.json()
-            if not data['msgArray']:
-                return f"查無 {stock_id} 的報價（可能非上市上櫃）"
-            stock = data['msgArray'][0]
-
-        name = stock['n']
-        price = stock['z']
-        y_price = stock['y']
-        vol = stock['v']
-        change = float(price) - float(y_price)
-        percent = (change / float(y_price)) * 100
-        return f"{name} ({stock_id})\n現價: {price}\n漲跌: {change:+.2f} ({percent:+.2f}%)\n成交量: {vol}"
-    except Exception as e:
-        return f"台股即時報價擷取失敗：{e}"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -95,6 +41,7 @@ def admin():
         <html><head><title>Line Bot 管理後台</title></head>
         <body>
         <h1>管理後台</h1>
+        <p>這是簡易版的後台頁面。</p>
         <ul>
             <li><a href='/static/kchart.png' target='_blank'>最新 K 線圖</a></li>
             <li><a href='/static/indicator.png' target='_blank'>最新技術指標圖</a></li>
@@ -105,93 +52,104 @@ def admin():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     msg = event.message.text.strip().upper()
-    reply = None
 
-    if msg.startswith("P"):
+    if msg.startswith('P') and msg[1:].isdigit():
         stock_id = msg[1:]
-        if stock_id.isdigit():
-            reply = get_tw_price(stock_id)
-        else:
+        realtime = twstock.realtime.get(stock_id)
+        if realtime['success']:
+            name = realtime['info'].get('name', '未知名稱')
+            price = realtime['realtime'].get('latest_trade_price', 'N/A')
             try:
-                stock = yf.Ticker(stock_id)
-                price = stock.info['regularMarketPrice']
-                name = stock.info['shortName']
-                reply = f"{name} ({stock_id})\n現價: {price}"
-            except:
-                reply = "股價查詢失敗"
+                change = float(realtime['realtime'].get('change', 0))
+                percent = float(realtime['realtime'].get('change_percent', 0))
+            except (ValueError, TypeError):
+                change = percent = 0
+            volume = int(realtime['realtime'].get('accumulate_trade_volume', 0))
+            reply = f"{name} ({stock_id})\n價格: {price}\n漲跌: {change:+.2f} ({percent:+.2f}%)\n成交量: {volume:,}"
+        else:
+            reply = f"查無 {stock_id} 的即時資料"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-    elif msg.startswith("K"):
+    elif msg.startswith('K') and msg[1:].isalnum():
         stock_id = msg[1:]
-        try:
-            df = yf.download(stock_id + ".TW" if stock_id.isdigit() else stock_id, period="1mo", interval="1d")
-            mpf.plot(df, type='candle', style='charles', savefig='static/kchart.png')
-            line_bot_api.reply_message(event.reply_token, ImageSendMessage(
-                original_content_url=request.url_root + 'static/kchart.png',
-                preview_image_url=request.url_root + 'static/kchart.png'))
-            return
-        except:
-            reply = "K線圖取得失敗"
+        suffix = "" if stock_id.isalpha() else ".TW"
+        stock = yf.Ticker(f"{stock_id}{suffix}")
+        data = stock.history(period="1mo")
+        if not data.empty:
+            mpf.plot(data, type='candle', style='charles', volume=True, savefig='static/kchart.png')
+            line_bot_api.reply_message(
+                event.reply_token,
+                ImageSendMessage(
+                    original_content_url="https://line-stock-bot-0966.onrender.com/static/kchart.png",
+                    preview_image_url="https://line-stock-bot-0966.onrender.com/static/kchart.png"
+                )
+            )
+        else:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"查無 {stock_id} 的K線資料"))
 
-    elif msg.startswith("T") and msg[1:].isdigit():
+    elif msg.startswith('T') and msg[1:].isdigit():
         stock_id = msg[1:]
         url = f"https://www.twse.com.tw/fund/TWT38U?response=json&selectType=ALL&stockNo={stock_id}"
         res = requests.get(url)
         try:
             data = res.json()['data'][0]
             reply = f"三大法人買賣資訊（{stock_id}）\n日期: {data[0]}\n外資: {data[1]}\n投信: {data[4]}\n自營商: {data[7]}"
-        except:
+        except Exception:
             reply = f"查無 {stock_id} 的三大法人資料"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
     elif msg.startswith("H") and msg[1:].isdigit():
         stock_id = msg[1:]
         try:
             url = f"https://www.cnyes.com/twstock/{stock_id}/institutional-investors"
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-            soup = BeautifulSoup(res.text, 'html.parser')
-            chart = soup.select_one('img[src*="InstitutionalInvestors"]')
-            if chart:
-                img_url = chart['src']
-                reply = f"{stock_id} 法人持股趨勢圖：\n{img_url}"
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                chart = soup.select_one('img[src*="InstitutionalInvestors"]')
+                if chart:
+                    img_url = chart['src']
+                    reply = f"{stock_id} 法人持股趨勢圖：\n{img_url}"
+                else:
+                    reply = f"查無 {stock_id} 的法人持股趨勢圖"
             else:
-                reply = f"查無 {stock_id} 的法人持股趨勢圖"
-        except:
+                reply = f"無法取得 {stock_id} 的資料"
+        except Exception:
             reply = f"取得法人持股趨勢失敗"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-    elif msg.startswith("N"):
+    elif msg.startswith("N") and msg[1:].isdigit():
         stock_id = msg[1:]
-        reply = get_news(stock_id)
-
-    elif msg.startswith("B"):
-        stock_id = msg[1:]
-        reply = get_comments(stock_id)
-
-    elif msg == "HELP":
-        reply = (
-            "可用指令：\n"
-            "P2330：即時股價\n"
-            "K2330：K線圖\n"
-            "T2330：法人資料\n"
-            "H2330：法人持股趨勢\n"
-            "N2330：最新新聞\n"
-            "B2330：熱門留言\n"
-            "IND2330：技術指標圖\n"
-            "TOP法人買超：法人買超排行\n"
-            "TOP殖利率：高殖利率排行"
-        )
-
-    elif msg.startswith("IND"):
-        stock_id = msg[3:]
         try:
-            df = yf.download(stock_id + ".TW" if stock_id.isdigit() else stock_id, period="3mo", interval="1d")
-            df['MA5'] = df['Close'].rolling(window=5).mean()
-            df['MA20'] = df['Close'].rolling(window=20).mean()
-            mpf.plot(df, type='candle', style='charles', mav=(5, 20), volume=True, savefig='static/indicator.png')
-            line_bot_api.reply_message(event.reply_token, ImageSendMessage(
-                original_content_url=request.url_root + 'static/indicator.png',
-                preview_image_url=request.url_root + 'static/indicator.png'))
-            return
-        except:
-            reply = "技術指標圖生成失敗"
+            news_url = f"https://www.cnyes.com/twstock/{stock_id}/news"
+            res = requests.get(news_url, headers={'User-Agent': 'Mozilla/5.0'})
+            soup = BeautifulSoup(res.text, 'html.parser')
+            articles = soup.select("section a[href^='/news/story/']")
+            if articles:
+                latest = articles[0]
+                title = latest.text.strip()
+                href = latest['href']
+                reply = f"{stock_id} 最新新聞：\n{title}\nhttps://www.cnyes.com{href}"
+            else:
+                reply = f"查無 {stock_id} 的最新新聞"
+        except Exception:
+            reply = f"新聞擷取失敗"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+
+    elif msg.startswith("B") and msg[1:].isdigit():
+        stock_id = msg[1:]
+        try:
+            url = f"https://www.cmoney.tw/forum/stock/{stock_id}"
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+            soup = BeautifulSoup(res.text, 'html.parser')
+            comment = soup.select_one("div.comment-item")
+            if comment:
+                text = comment.text.strip().replace('\n', '')
+                reply = f"{stock_id} 熱門留言（CMoney）：\n{text[:150]}..."
+            else:
+                reply = f"查無 {stock_id} 的熱門留言"
+        except Exception:
+            reply = f"留言擷取失敗"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
     elif msg == "TOP法人買超":
         try:
@@ -205,8 +163,9 @@ def handle_message(event):
                 if len(tds) >= 4:
                     results.append(f"{tds[1].text.strip()} ({tds[0].text.strip()}): {tds[3].text.strip()} 張")
             reply = "法人買超排行前五名：\n" + '\n'.join(results)
-        except:
+        except Exception:
             reply = "法人買超排行擷取失敗"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
     elif msg == "TOP殖利率":
         try:
@@ -220,11 +179,28 @@ def handle_message(event):
                 if len(cols) >= 6:
                     results.append(f"{cols[1].text.strip()} ({cols[0].text.strip()}): 殖利率 {cols[5].text.strip()}")
             reply = "高殖利率排行前五名：\n" + '\n'.join(results)
-        except:
+        except Exception:
             reply = "殖利率排行擷取失敗"
-
-    if reply:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+
+    elif msg == "HELP":
+        instructions = (
+            "\n指令教學：\n"
+            "P2330 → 即時股價 (台股 twstock)\n"
+            "K2330 → 日K線圖\n"
+            "T2330 → 三大法人資料\n"
+            "H2330 → 法人持股趨勢圖\n"
+            "PTSLA → 美股即時股價\n"
+            "KTSLA → 美股K線圖\n"
+            "IND2330 或 INDTSLA → 技術指標圖(MA5/20)\n"
+            "B2330 → CMoney熱門留言\n"
+            "N2330 → 鉅亨網最新新聞\n"
+            "TOP法人買超 → 法人買超排行\n"
+            "TOP殖利率 → 殖利率排行"
+        )
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=instructions))
+    else:
+        return
 
 def push_ai_news():
     url = "https://news.cnyes.com/news/cat/tw_stock_ai"
@@ -236,7 +212,7 @@ def push_ai_news():
             title = news.text.strip()
             link = 'https://news.cnyes.com' + news.get('href')
             msg = f"每日AI新聞：\n{title}\n{link}"
-            line_bot_api.push_message(USER_ID, TextSendMessage(text=msg))
+            line_bot_api.push_message('YOUR_USER_ID', TextSendMessage(text=msg))
     except Exception as e:
         print(f"推播失敗: {e}")
 
